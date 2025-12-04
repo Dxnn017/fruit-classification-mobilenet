@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Dataset (muy pesado para GitHub - se descarga de Kaggle)
+dataset/
+*.zip
+
+# Nota: FV_Fruits_Only.h5 SÍ se sube al repo para compartir con el grupo
+
+# Imagenes subidas por usuarios
+upload_images/
+
+# Kaggle
+.kaggle/
+
+# IDEs
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
