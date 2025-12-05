@@ -1,7 +1,5 @@
 import streamlit as st
 from PIL import Image
-import requests
-from bs4 import BeautifulSoup
 import numpy as np
 import tf_keras as keras
 from tf_keras.preprocessing.image import load_img, img_to_array
@@ -20,17 +18,28 @@ fruits = ['Apple', 'Banana', 'Bell Pepper', 'Chilli Pepper', 'Grapes', 'Jalepeno
           'Kiwi', 'Lemon', 'Mango', 'Orange', 'Paprika', 'Pear', 
           'Pineapple', 'Pomegranate', 'Watermelon']
 
+# Precios aproximados en soles peruanos por kilogramo (S/./kg)
+precios_soles = {
+    'apple': 'S/. 6.50',
+    'banana': 'S/. 2.80',
+    'bell pepper': 'S/. 4.50',
+    'chilli pepper': 'S/. 8.00',
+    'grapes': 'S/. 9.50',
+    'jalepeno': 'S/. 7.50',
+    'kiwi': 'S/. 12.00',
+    'lemon': 'S/. 3.50',
+    'mango': 'S/. 5.50',
+    'orange': 'S/. 4.00',
+    'paprika': 'S/. 5.00',
+    'pear': 'S/. 7.00',
+    'pineapple': 'S/. 6.00',
+    'pomegranate': 'S/. 15.00',
+    'watermelon': 'S/. 2.50'
+}
 
-def fetch_calories(prediction):
-    try:
-        url = 'https://www.google.com/search?&q=calories in ' + prediction
-        req = requests.get(url).text
-        scrap = BeautifulSoup(req, 'html.parser')
-        calories = scrap.find("div", class_="BNeawe iBp4i AP7Wnd").text
-        return calories
-    except Exception as e:
-        st.error("Can't able to fetch the Calories")
-        print(e)
+def get_precio(prediction):
+    """Obtiene el precio aproximado de la fruta en soles peruanos"""
+    return precios_soles.get(prediction.lower(), 'Precio no disponible')
 
 
 def prepare_image(img_path):
@@ -67,7 +76,7 @@ def run():
         with col1:
             st.markdown("#### 📸 Imagen Original")
             img = Image.open(img_file).resize((250, 250))
-            st.image(img, use_column_width=True)
+            st.image(img, use_container_width=True)
         
         with col2:
             st.markdown("#### 🔍 Resultados")
@@ -81,12 +90,10 @@ def run():
             # Mostrar predicción
             st.success(f"🍎 **Identificado como: {result}**")
             
-            # Mostrar calorías
-            cal = fetch_calories(result)
-            if cal:
-                st.warning(f'⚡ **{cal}** (por 100 gramos)')
-            else:
-                st.info("ℹ️ No se pudieron obtener las calorías")
+            # Mostrar precio
+            precio = get_precio(result)
+            st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
+            st.caption('💡 Precios referenciales del mercado peruano')
 
 
 run()
