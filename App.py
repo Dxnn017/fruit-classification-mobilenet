@@ -62,9 +62,24 @@ def prepare_image(img_path):
     return res.capitalize()
 
 
+def process_image(img_pil):
+    """Procesa una imagen PIL y retorna la predicción"""
+    # Crear directorio upload_images si no existe
+    upload_dir = os.path.join(script_dir, 'upload_images')
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Guardar imagen temporalmente
+    temp_path = os.path.join(upload_dir, 'temp_image.jpg')
+    img_pil.save(temp_path)
+    
+    # Procesar y predecir
+    result = prepare_image(temp_path)
+    return result
+
+
 def run():
     st.title("🍎 Clasificación de Frutas")
-    st.markdown("### Sube una imagen para identificar una de 15 frutas")
+    st.markdown("### Identifica frutas mediante imagen o cámara")
     
     # Mostrar lista de frutas disponibles
     with st.expander("📋 Ver lista de frutas que puedo identificar"):
@@ -72,38 +87,65 @@ def run():
         for idx, fruit in enumerate(fruits):
             cols[idx % 3].write(f"• {fruit}")
     
-    img_file = st.file_uploader("Selecciona una imagen", type=["jpg", "png", "jpeg"])
+    # Crear pestañas para subir imagen o usar cámara
+    tab1, tab2 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara"])
     
-    if img_file is not None:
-        # Crear columnas para mejor diseño
-        col1, col2 = st.columns(2)
+    # ========== PESTAÑA 1: SUBIR IMAGEN ==========
+    with tab1:
+        st.markdown("#### Selecciona una imagen desde tu dispositivo")
+        img_file = st.file_uploader("Selecciona una imagen", type=["jpg", "png", "jpeg"], key="file_uploader")
         
-        with col1:
-            st.markdown("#### 📸 Imagen Original")
-            img = Image.open(img_file).resize((250, 250))
-            st.image(img, use_container_width=True)
-        
-        with col2:
-            st.markdown("#### 🔍 Resultados")
+        if img_file is not None:
+            # Crear columnas para mejor diseño
+            col1, col2 = st.columns(2)
             
-            # Crear directorio upload_images si no existe
-            upload_dir = os.path.join(script_dir, 'upload_images')
-            os.makedirs(upload_dir, exist_ok=True)
+            with col1:
+                st.markdown("#### 📸 Imagen Original")
+                img = Image.open(img_file).resize((250, 250))
+                st.image(img, use_container_width=True)
             
-            save_image_path = os.path.join(upload_dir, img_file.name)
-            with open(save_image_path, "wb") as f:
-                f.write(img_file.getbuffer())
-            
-            with st.spinner('Analizando fruta...'):
-                result = prepare_image(save_image_path)
+            with col2:
+                st.markdown("#### 🔍 Resultados")
                 
-            # Mostrar predicción
-            st.success(f"🍎 **Identificado como: {result}**")
+                with st.spinner('Analizando fruta...'):
+                    result = process_image(Image.open(img_file))
+                    
+                # Mostrar predicción
+                st.success(f"🍎 **Identificado como: {result}**")
+                
+                # Mostrar precio
+                precio = get_precio(result)
+                st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
+                st.caption('💡 Precios referenciales del mercado peruano')
+    
+    # ========== PESTAÑA 2: CÁMARA ==========
+    with tab2:
+        st.markdown("#### Captura una imagen usando tu cámara web")
+        
+        camera_photo = st.camera_input("Toma una foto de la fruta", key="camera")
+        
+        if camera_photo is not None:
+            # Crear columnas para mejor diseño
+            col1, col2 = st.columns(2)
             
-            # Mostrar precio
-            precio = get_precio(result)
-            st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
-            st.caption('💡 Precios referenciales del mercado peruano')
+            with col1:
+                st.markdown("#### 📸 Imagen Capturada")
+                img = Image.open(camera_photo).resize((250, 250))
+                st.image(img, use_container_width=True)
+            
+            with col2:
+                st.markdown("#### 🔍 Resultados")
+                
+                with st.spinner('Analizando fruta...'):
+                    result = process_image(Image.open(camera_photo))
+                    
+                # Mostrar predicción
+                st.success(f"🍎 **Identificado como: {result}**")
+                
+                # Mostrar precio
+                precio = get_precio(result)
+                st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
+                st.caption('💡 Precios referenciales del mercado peruano')
 
 
 run()
