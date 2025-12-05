@@ -117,12 +117,24 @@ def run():
                 precio = get_precio(result)
                 st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
                 st.caption('💡 Precios referenciales del mercado peruano')
+                
+                # Botón para cargar otra imagen
+                if st.button("🔄 Cargar otra imagen", key="reload_upload"):
+                    st.rerun()
     
     # ========== PESTAÑA 2: CÁMARA ==========
     with tab2:
         st.markdown("#### Captura una imagen usando tu cámara web")
+        st.caption("💡 La detección se realizará automáticamente al capturar la foto")
         
-        camera_photo = st.camera_input("Toma una foto de la fruta", key="camera")
+        # Inicializar estado de sesión para controlar capturas
+        if 'camera_key' not in st.session_state:
+            st.session_state.camera_key = 0
+        
+        camera_photo = st.camera_input(
+            "📷 Toma una foto de la fruta", 
+            key=f"camera_{st.session_state.camera_key}"
+        )
         
         if camera_photo is not None:
             # Crear columnas para mejor diseño
@@ -136,7 +148,7 @@ def run():
             with col2:
                 st.markdown("#### 🔍 Resultados")
                 
-                with st.spinner('Analizando fruta...'):
+                with st.spinner('🔍 Analizando fruta...'):
                     result = process_image(Image.open(camera_photo))
                     
                 # Mostrar predicción
@@ -146,6 +158,12 @@ def run():
                 precio = get_precio(result)
                 st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
                 st.caption('💡 Precios referenciales del mercado peruano')
+            
+            # Botón para tomar otra foto
+            st.markdown("---")
+            if st.button("📷 Tomar otra foto", key="retake_photo", type="primary"):
+                st.session_state.camera_key += 1
+                st.rerun()
 
 
 run()
