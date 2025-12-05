@@ -8,6 +8,43 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
+# Configuración de la página de Streamlit
+st.set_page_config(
+    page_title="🍎 Clasificador de Frutas AI",
+    page_icon="🍎",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS personalizado para mejorar la apariencia
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        color: #2e7d32;
+        padding: 1rem 0;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #4caf50;
+    }
+    .error-message {
+        background-color: #ffebee;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #f44336;
+    }
+    .success-message {
+        background-color: #e8f5e9;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #4caf50;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Obtener el directorio del script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(script_dir, 'FV_Fruits_Only.h5')
@@ -62,6 +99,22 @@ def prepare_image(img_path):
     res = labels[y]
     confidence = float(answer[0][y_class[0]])
     return res.capitalize(), confidence
+
+def process_image(pil_image):
+    """Procesa una imagen PIL directamente (para cámara y uploads)"""
+    # Convertir PIL a array y redimensionar
+    img = pil_image.resize((224, 224))
+    img = img_to_array(img)
+    img = img / 255.0
+    img = np.expand_dims(img, axis=0)
+    
+    # Predicción
+    answer = model.predict(img, verbose=0)
+    y_class = answer.argmax(axis=-1)
+    y = int(y_class[0])
+    res = labels[y]
+    
+    return res.capitalize()
 
 def prepare_multiple_images(image_paths):
     """Procesa múltiples imágenes de forma eficiente usando batch prediction"""
@@ -137,21 +190,22 @@ def prepare_multiple_images(image_paths):
 
 
 def run():
-    st.title("🍎 Clasificación de Frutas - Procesamiento Individual y Múltiple")
+    st.title("🍎 Clasificación de Frutas")
+    st.markdown("### Identifica frutas mediante imagen, cámara o procesamiento múltiple")
     
-    # Tabs para diferentes modos
-    tab1, tab2 = st.tabs(["📸 Imagen Individual", "📚 Múltiples Imágenes"])
+    # Mostrar lista de frutas disponibles
+    with st.expander("📋 Ver lista de frutas que puedo identificar"):
+        cols = st.columns(3)
+        for idx, fruit in enumerate(fruits):
+            cols[idx % 3].write(f"• {fruit}")
     
+    # Crear pestañas para los diferentes modos
+    tab1, tab2, tab3 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara", "📚 Múltiples Imágenes"])
+    
+    # ========== PESTAÑA 1: SUBIR IMAGEN ==========
     with tab1:
-        st.markdown("### Sube una imagen para identificar una fruta")
-        
-        # Mostrar lista de frutas disponibles
-        with st.expander("📋 Ver lista de frutas que puedo identificar"):
-            cols = st.columns(3)
-            for idx, fruit in enumerate(fruits):
-                cols[idx % 3].write(f"• {fruit}")
-        
-        img_file = st.file_uploader("Selecciona una imagen", type=["jpg", "png", "jpeg"], key="single")
+        st.markdown("#### Selecciona una imagen desde tu dispositivo")
+        img_file = st.file_uploader("Selecciona una imagen", type=["jpg", "png", "jpeg"], key="file_uploader")
         
         if img_file is not None:
             # Crear columnas para mejor diseño
@@ -165,27 +219,66 @@ def run():
             with col2:
                 st.markdown("#### 🔍 Resultados")
                 
-                # Crear directorio upload_images si no existe
-                upload_dir = os.path.join(script_dir, 'upload_images')
-                os.makedirs(upload_dir, exist_ok=True)
-                
-                save_image_path = os.path.join(upload_dir, f"single_{img_file.name}")
-                with open(save_image_path, "wb") as f:
-                    f.write(img_file.getbuffer())
-                
                 with st.spinner('Analizando fruta...'):
-                    result, confidence = prepare_image(save_image_path)
+                    result = process_image(Image.open(img_file))
                     
                 # Mostrar predicción
                 st.success(f"🍎 **Identificado como: {result}**")
-                st.info(f"🎯 **Confianza: {confidence:.2%}**")
                 
                 # Mostrar precio
                 precio = get_precio(result)
                 st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
                 st.caption('💡 Precios referenciales del mercado peruano')
+                
+                # Botón para cargar otra imagen
+                if st.button("🔄 Cargar otra imagen", key="reload_upload"):
+                    st.rerun()
     
+    # ========== PESTAÑA 2: CÁMARA ==========
     with tab2:
+        st.markdown("#### Captura una imagen usando tu cámara web")
+        st.caption("💡 La detección se realizará automáticamente al capturar la foto")
+        
+        # Inicializar estado de sesión para controlar capturas
+        if 'camera_key' not in st.session_state:
+            st.session_state.camera_key = 0
+        
+        camera_photo = st.camera_input(
+            "📷 Toma una foto de la fruta", 
+            key=f"camera_{st.session_state.camera_key}"
+        )
+        
+        if camera_photo is not None:
+            # Crear columnas para mejor diseño
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 📸 Imagen Capturada")
+                img = Image.open(camera_photo).resize((250, 250))
+                st.image(img, use_container_width=True)
+            
+            with col2:
+                st.markdown("#### 🔍 Resultados")
+                
+                with st.spinner('🔍 Analizando fruta...'):
+                    result = process_image(Image.open(camera_photo))
+                    
+                # Mostrar predicción
+                st.success(f"🍎 **Identificado como: {result}**")
+                
+                # Mostrar precio
+                precio = get_precio(result)
+                st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
+                st.caption('💡 Precios referenciales del mercado peruano')
+            
+            # Botón para tomar otra foto
+            st.markdown("---")
+            if st.button("📷 Tomar otra foto", key="retake_photo", type="primary"):
+                st.session_state.camera_key += 1
+                st.rerun()
+    
+    # ========== PESTAÑA 3: MÚLTIPLES IMÁGENES ==========
+    with tab3:
         st.markdown("### 🚀 Procesamiento de múltiples imágenes simultáneas")
         st.info("📝 Puedes subir hasta 10 imágenes para procesamiento en lote")
         
@@ -310,43 +403,6 @@ def run():
                 if st.button("🗑️ Limpiar y procesar nuevas imágenes"):
                     st.rerun()
 
-# Configuración de la página de Streamlit
-st.set_page_config(
-    page_title="🍎 Clasificador de Frutas AI",
-    page_icon="🍎",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# CSS personalizado para mejorar la apariencia
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        color: #2e7d32;
-        padding: 1rem 0;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #4caf50;
-    }
-    .error-message {
-        background-color: #ffebee;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #f44336;
-    }
-    .success-message {
-        background-color: #e8f5e9;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #4caf50;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # Sidebar con información
 with st.sidebar:
     st.markdown("## 🔧 Información del Sistema")
@@ -357,6 +413,7 @@ with st.sidebar:
     st.markdown("## 📊 Características")
     st.markdown("""
     - ✅ Procesamiento individual
+    - ✅ Captura con cámara web
     - ✅ Procesamiento en lote (hasta 10 imágenes)
     - ✅ Predicción con confianza
     - ✅ Precios referenciales en soles
