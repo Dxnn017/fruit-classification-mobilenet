@@ -1,0 +1,131 @@
+{
+    "model_info": {
+        "name": "FV_Fruits_Only",
+        "version": "1.0",
+        "architecture": "MobileNetV2 + Custom Dense Layers",
+        "framework": "TensorFlow/Keras",
+        "creation_date": "2025-12-05T08:36:38.649063",
+        "author": "Fruit Classification Project"
+    },
+    "dataset_info": {
+        "total_classes": 15,
+        "classes": [
+            "apple",
+            "banana",
+            "bell pepper",
+            "chilli pepper",
+            "grapes",
+            "jalepeno",
+            "kiwi",
+            "lemon",
+            "mango",
+            "orange",
+            "paprika",
+            "pear",
+            "pineapple",
+            "pomegranate",
+            "watermelon"
+        ],
+        "training_samples": "Pre-trained model",
+        "validation_samples": "Pre-trained model",
+        "test_samples": 137,
+        "image_size": "224x224x3"
+    },
+    "training_config": {
+        "epochs": 10,
+        "batch_size": 32,
+        "optimizer": "adam",
+        "loss_function": "categorical_crossentropy",
+        "metrics": [
+            "accuracy"
+        ],
+        "early_stopping": {
+            "monitor": "val_loss",
+            "patience": 3,
+            "restore_best_weights": true
+        }
+    },
+    "data_augmentation": {
+        "rotation_range": 30,
+        "zoom_range": 0.15,
+        "width_shift_range": 0.2,
+        "height_shift_range": 0.2,
+        "shear_range": 0.15,
+        "horizontal_flip": true,
+        "fill_mode": "nearest"
+    },
+    "model_architecture": {
+        "base_model": "MobileNetV2",
+        "base_weights": "imagenet",
+        "base_trainable": false,
+        "pooling": "avg",
+        "custom_layers": [
+            {
+                "type": "Dense",
+                "units": 128,
+                "activation": "relu"
+            },
+            {
+                "type": "Dense",
+                "units": 128,
+                "activation": "relu"
+            },
+            {
+                "type": "Dense",
+                "units": 15,
+                "activation": "softmax"
+            }
+        ]
+    },
+    "performance_metrics": {
+        "training": {
+            "final_accuracy": 0.98,
+            "final_loss": 0.1,
+            "best_epoch": 7
+        },
+        "validation": {
+            "final_accuracy": 0.97,
+            "final_loss": 0.13,
+            "best_accuracy": 0.97
+        },
+        "test": {
+            "accuracy": 0.9708029197080292,
+            "avg_confidence": 0.9762209057807922,
+            "predictions_total": 137,
+            "predictions_correct": 133,
+            "predictions_incorrect": 4
+        }
+    },
+    "statistical_analysis": {
+        "confidence_scores": {
+            "mean": 0.9762209057807922,
+            "median": 0.9992881417274475,
+            "std": 0.0915658101439476,
+            "min": 0.34671053290367126,
+            "max": 1.0
+        },
+        "per_class_accuracy": {
+            "apple": 0.8,
+            "banana": 0.8888888888888888,
+            "bell pepper": 1.0,
+            "chilli pepper": 0.8571428571428571,
+            "grapes": 1.0,
+            "jalepeno": 1.0,
+            "kiwi": 1.0,
+            "lemon": 1.0,
+            "mango": 1.0,
+            "orange": 1.0,
+            "paprika": 1.0,
+            "pear": 1.0,
+            "pineapple": 1.0,
+            "pomegranate": 1.0,
+            "watermelon": 1.0
+        }
+    },
+    "integrity": {
+        "model_file": "FV_Fruits_Only.h5",
+        "metadata_file": "model_metadata.json",
+        "timestamp": "2025-12-05T08:36:38.650248",
+        "checksum": "SHA256 (to be calculated)"
+    }
+}
