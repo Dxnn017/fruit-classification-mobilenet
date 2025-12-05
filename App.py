@@ -189,18 +189,39 @@ def prepare_multiple_images(image_paths):
     return results
 
 
+def process_image(img_pil):
+    """Procesa una imagen PIL y retorna la predicción"""
+    # Crear directorio upload_images si no existe
+    upload_dir = os.path.join(script_dir, 'upload_images')
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Guardar imagen temporalmente
+    temp_path = os.path.join(upload_dir, 'temp_image.jpg')
+    img_pil.save(temp_path)
+    
+    # Procesar y predecir
+    result = prepare_image(temp_path)
+    return result
+
+
 def run():
     st.title("🍎 Clasificación de Frutas")
+    HEAD
     st.markdown("### Identifica frutas mediante imagen, cámara o procesamiento múltiple")
+    st.markdown("### Identifica frutas mediante imagen o cámara")
+    origin/main
     
     # Mostrar lista de frutas disponibles
     with st.expander("📋 Ver lista de frutas que puedo identificar"):
         cols = st.columns(3)
         for idx, fruit in enumerate(fruits):
             cols[idx % 3].write(f"• {fruit}")
-    
+ 
     # Crear pestañas para los diferentes modos
     tab1, tab2, tab3 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara", "📚 Múltiples Imágenes"])
+    # Crear pestañas para subir imagen o usar cámara
+    tab1, tab2 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara"])
+    origin/main
     
     # ========== PESTAÑA 1: SUBIR IMAGEN ==========
     with tab1:
@@ -402,6 +423,68 @@ def run():
                 # Botón para limpiar resultados
                 if st.button("🗑️ Limpiar y procesar nuevas imágenes"):
                     st.rerun()
+            
+            with col2:
+                st.markdown("#### 🔍 Resultados")
+                
+                with st.spinner('Analizando fruta...'):
+                    result = process_image(Image.open(img_file))
+                    
+                # Mostrar predicción
+                st.success(f"🍎 **Identificado como: {result}**")
+                
+                # Mostrar precio
+                precio = get_precio(result)
+                st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
+                st.caption('💡 Precios referenciales del mercado peruano')
+                
+                # Botón para cargar otra imagen
+                if st.button("🔄 Cargar otra imagen", key="reload_upload"):
+                    st.rerun()
+    
+    # ========== PESTAÑA 2: CÁMARA ==========
+    with tab2:
+        st.markdown("#### Captura una imagen usando tu cámara web")
+        st.caption("💡 La detección se realizará automáticamente al capturar la foto")
+        
+        # Inicializar estado de sesión para controlar capturas
+        if 'camera_key' not in st.session_state:
+            st.session_state.camera_key = 0
+        
+        camera_photo = st.camera_input(
+            "📷 Toma una foto de la fruta", 
+            key=f"camera_{st.session_state.camera_key}"
+        )
+        
+        if camera_photo is not None:
+            # Crear columnas para mejor diseño
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 📸 Imagen Capturada")
+                img = Image.open(camera_photo).resize((250, 250))
+                st.image(img, use_container_width=True)
+            
+            with col2:
+                st.markdown("#### 🔍 Resultados")
+                
+                with st.spinner('🔍 Analizando fruta...'):
+                    result = process_image(Image.open(camera_photo))
+                    
+                # Mostrar predicción
+                st.success(f"🍎 **Identificado como: {result}**")
+                
+                # Mostrar precio
+                precio = get_precio(result)
+                st.info(f'💰 **Precio aproximado: {precio}** por kilogramo')
+                st.caption('💡 Precios referenciales del mercado peruano')
+            
+            # Botón para tomar otra foto
+            st.markdown("---")
+            if st.button("📷 Tomar otra foto", key="retake_photo", type="primary"):
+                st.session_state.camera_key += 1
+                st.rerun()
+origin/main
 
 # Sidebar con información
 with st.sidebar:
@@ -433,3 +516,4 @@ with st.sidebar:
 # Ejecutar la aplicación principal
 if __name__ == "__main__":
     run()
+    
