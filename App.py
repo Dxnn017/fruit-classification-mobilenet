@@ -3,9 +3,14 @@ from PIL import Image
 import numpy as np
 import tf_keras as keras
 from tf_keras.preprocessing.image import load_img, img_to_array
+import os
+
+# Obtener el directorio del script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(script_dir, 'FV_Fruits_Only.h5')
 
 # Cargar modelo entrenado solo con frutas
-model = keras.models.load_model('FV_Fruits_Only.h5')
+model = keras.models.load_model(model_path)
 
 labels = {
     0: 'apple', 1: 'banana', 2: 'bell pepper', 3: 'chilli pepper', 
@@ -80,7 +85,12 @@ def run():
         
         with col2:
             st.markdown("#### 🔍 Resultados")
-            save_image_path = './upload_images/' + img_file.name
+            
+            # Crear directorio upload_images si no existe
+            upload_dir = os.path.join(script_dir, 'upload_images')
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            save_image_path = os.path.join(upload_dir, img_file.name)
             with open(save_image_path, "wb") as f:
                 f.write(img_file.getbuffer())
             
