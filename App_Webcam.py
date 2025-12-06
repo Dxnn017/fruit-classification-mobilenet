@@ -7,9 +7,9 @@ import streamlit as st
 import cv2
 import numpy as np
 import tensorflow as tf
-import keras
-from keras.preprocessing.image import img_to_array
-from keras.applications.mobilenet_v2 import preprocess_input
+import tf_keras as keras
+from tf_keras.preprocessing.image import img_to_array
+from tf_keras.applications.mobilenet_v2 import preprocess_input
 import os
 from PIL import Image
 import tempfile
