@@ -7,6 +7,14 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+import boto3
+from botocore.client import Config
+from kafka import KafkaProducer
+import json
+import uuid
+from datetime import datetime
+import psycopg2
+from io import BytesIO
 
 # Configuración de la página de Streamlit
 st.set_page_config(
@@ -45,11 +53,60 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ============================================================
+# CONFIGURACIÓN DIGITAL OCEAN SPACES + KAFKA
+# ============================================================
+REGION = "atl1"
+DO_SPACE_ENDPOINT = f"https://{REGION}.digitaloceanspaces.com"
+DO_SPACE_NAME = "frutas-bigdata-2025"
+DO_ACCESS_KEY = "DO801BXNYAPL87NEY9FV"
+DO_SECRET_KEY = "pEBwYd8LYWGTUnYoACAoQypdd0ttp4B27G2R2zhxATA"
+
+# Configuración Kafka
+KAFKA_BROKER = "165.245.129.149:9092"
+KAFKA_TOPIC = "fruit-images"
+
+# Configuración PostgreSQL
+PG_HOST = "165.245.129.150"
+PG_PORT = 5432
+PG_DATABASE = "fruit_predictions"
+PG_USER = "postgres"
+PG_PASSWORD = "admin123"
+
+# Cliente S3 para Digital Ocean Spaces
+try:
+    s3_client = boto3.client(
+        's3',
+        region_name=REGION,
+        endpoint_url=DO_SPACE_ENDPOINT,
+        aws_access_key_id=DO_ACCESS_KEY,
+        aws_secret_access_key=DO_SECRET_KEY,
+        config=Config(signature_version='s3v4')
+    )
+    spaces_available = True
+except Exception as e:
+    spaces_available = False
+    st.sidebar.error(f"⚠️ Error conectando a Spaces: {str(e)}")
+
+# Productor Kafka
+try:
+    kafka_producer = KafkaProducer(
+        bootstrap_servers=[KAFKA_BROKER],
+        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        api_version=(0, 10, 1),
+        request_timeout_ms=30000,
+        max_block_ms=60000
+    )
+    kafka_available = True
+except Exception as e:
+    kafka_available = False
+    st.sidebar.error(f"⚠️ Error conectando a Kafka: {str(e)}")
+
 # Obtener el directorio del script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(script_dir, 'FV_Fruits_Only.h5')
 
-# Cargar modelo entrenado solo con frutas
+# Cargar modelo entrenado solo con frutas (para modos 1 y 2)
 model = keras.models.load_model(model_path)
 
 labels = {
@@ -204,12 +261,106 @@ def process_image(img_pil):
     return result
 
 
+# ============================================================
+# FUNCIONES PARA KAFKA + SPARK + SPACES
+# ============================================================
+
+def upload_to_spaces(image_bytes, filename, session_id):
+    """Sube imagen a Digital Ocean Spaces y retorna la URL"""
+    try:
+        # Generar key único con fecha
+        date_folder = datetime.now().strftime('%Y%m%d')
+        image_key = f"uploads/{date_folder}/{session_id}/{filename}"
+        
+        # Subir a Spaces
+        s3_client.put_object(
+            Bucket=DO_SPACE_NAME,
+            Key=image_key,
+            Body=image_bytes,
+            ACL='private',
+            ContentType='image/jpeg'
+        )
+        
+        # Retornar URL completa
+        image_url = f"{DO_SPACE_ENDPOINT}/{DO_SPACE_NAME}/{image_key}"
+        return image_url
+    except Exception as e:
+        raise Exception(f"Error subiendo a Spaces: {str(e)}")
+
+
+def send_to_kafka(image_url, session_id, filename):
+    """Envía mensaje a Kafka con la URL de la imagen"""
+    try:
+        message = {
+            'image_url': image_url,
+            'session_id': session_id,
+            'filename': filename,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        future = kafka_producer.send(KAFKA_TOPIC, value=message)
+        kafka_producer.flush()
+        
+        result = future.get(timeout=10)
+        return True
+    except Exception as e:
+        raise Exception(f"Error enviando a Kafka: {str(e)}")
+
+
+def query_results_from_postgres(session_id, max_wait_seconds=60):
+    """Consulta resultados de PostgreSQL para una sesión específica"""
+    try:
+        conn = psycopg2.connect(
+            host=PG_HOST,
+            port=PG_PORT,
+            database=PG_DATABASE,
+            user=PG_USER,
+            password=PG_PASSWORD
+        )
+        cur = conn.cursor()
+        
+        # Esperar hasta que todos los resultados estén listos
+        start_time = time.time()
+        results = []
+        
+        while time.time() - start_time < max_wait_seconds:
+            cur.execute("""
+                SELECT filename, fruit, confidence, processed_at, image_url
+                FROM predictions
+                WHERE session_id = %s
+                ORDER BY processed_at
+            """, (session_id,))
+            
+            results = cur.fetchall()
+            
+            if len(results) > 0:
+                break
+            
+            time.sleep(2)  # Esperar 2 segundos antes de volver a consultar
+        
+        cur.close()
+        conn.close()
+        
+        # Convertir a formato dict
+        formatted_results = []
+        for row in results:
+            formatted_results.append({
+                'filename': row[0],
+                'prediction': row[1],
+                'confidence': float(row[2]),
+                'processed_at': row[3],
+                'image_url': row[4],
+                'price': get_precio(row[1])
+            })
+        
+        return formatted_results
+    except Exception as e:
+        raise Exception(f"Error consultando PostgreSQL: {str(e)}")
+
+
 def run():
     st.title("🍎 Clasificación de Frutas")
-    HEAD
-    st.markdown("### Identifica frutas mediante imagen, cámara o procesamiento múltiple")
-    st.markdown("### Identifica frutas mediante imagen o cámara")
-    origin/main
+    st.markdown("### Identifica frutas mediante imagen, cámara o procesamiento múltiple con Kafka + Spark")
     
     # Mostrar lista de frutas disponibles
     with st.expander("📋 Ver lista de frutas que puedo identificar"):
@@ -218,10 +369,7 @@ def run():
             cols[idx % 3].write(f"• {fruit}")
  
     # Crear pestañas para los diferentes modos
-    tab1, tab2, tab3 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara", "📚 Múltiples Imágenes"])
-    # Crear pestañas para subir imagen o usar cámara
-    tab1, tab2 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara"])
-    origin/main
+    tab1, tab2, tab3 = st.tabs(["📁 Subir Imagen", "📷 Capturar con Cámara", "📚 Lote (Múltiple)"])
     
     # ========== PESTAÑA 1: SUBIR IMAGEN ==========
     with tab1:
@@ -298,17 +446,52 @@ def run():
                 st.session_state.camera_key += 1
                 st.rerun()
     
-    # ========== PESTAÑA 3: MÚLTIPLES IMÁGENES ==========
+    # ========== PESTAÑA 3: LOTE (MÚLTIPLE) - KAFKA + SPARK ==========
     with tab3:
-        st.markdown("### 🚀 Procesamiento de múltiples imágenes simultáneas")
-        st.info("📝 Puedes subir hasta 10 imágenes para procesamiento en lote")
+        st.markdown("### 🚀 Procesamiento Distribuido con Kafka + Spark")
+        
+        # Mostrar estado del cluster en sidebar
+        with st.sidebar:
+            st.markdown("### 🔧 Estado del Cluster")
+            if spaces_available:
+                st.success("✅ **Frontend**: Online")
+            else:
+                st.error("❌ **Frontend**: Offline")
+            
+            st.info(f"📦 **Storage**: {DO_SPACE_NAME}")
+            
+            if kafka_available:
+                st.info(f"📨 **Kafka**: {KAFKA_BROKER.split(':')[0]}")
+            else:
+                st.error(f"❌ **Kafka**: Error de conexión")
+            
+            if spaces_available and kafka_available:
+                st.success("💡 **Asegúrate que 'procesar_frutas.py' esté corriendo en la otra terminal.**")
+            else:
+                st.error("⚠️ Kafka o Spaces no disponible")
+        
+        st.info("📝 **Arquitectura**: Spaces (S3) → Kafka → Spark Streaming → PostgreSQL")
+        st.caption("💡 Las imágenes se suben a Digital Ocean Spaces, se envían a Kafka y Spark las procesa de forma distribuida")
+        
+        # Verificar disponibilidad de servicios
+        if not spaces_available or not kafka_available:
+            st.error("❌ **Error**: No se puede conectar a Kafka o Spaces. Verifica que los servicios estén activos.")
+            st.markdown("""
+            **Servicios requeridos:**
+            - ✅ Digital Ocean Spaces configurado
+            - ✅ Kafka corriendo en `165.245.129.149:9092`
+            - ✅ Spark Streaming ejecutando `procesar_frutas.py`
+            - ✅ PostgreSQL en `165.245.129.150:5432`
+            """)
+            return
         
         # Subir múltiples archivos
         uploaded_files = st.file_uploader(
-            "Selecciona múltiples imágenes", 
+            "Selecciona múltiples imágenes (máx. 10)", 
             type=["jpg", "png", "jpeg"], 
             accept_multiple_files=True,
-            key="multiple"
+            key="multiple",
+            help="Limit 200MB per file • JPG, PNG, JPEG"
         )
         
         if uploaded_files:
@@ -319,116 +502,179 @@ def run():
             
             st.success(f"✅ {len(uploaded_files)} imágenes cargadas correctamente")
             
-            # Crear directorio para múltiples imágenes
-            upload_dir = os.path.join(script_dir, 'upload_images', 'batch')
-            os.makedirs(upload_dir, exist_ok=True)
-            
-            # Guardar archivos y crear paths
-            image_paths = []
-            for i, uploaded_file in enumerate(uploaded_files):
-                file_path = os.path.join(upload_dir, f"batch_{i}_{uploaded_file.name}")
-                with open(file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                image_paths.append(file_path)
+            # Mostrar preview de imágenes
+            with st.expander("🖼️ Vista previa de imágenes", expanded=False):
+                cols = st.columns(min(len(uploaded_files), 5))
+                for i, uploaded_file in enumerate(uploaded_files[:5]):
+                    with cols[i]:
+                        img = Image.open(uploaded_file)
+                        st.image(img, caption=uploaded_file.name, use_container_width=True)
+                if len(uploaded_files) > 5:
+                    st.caption(f"... y {len(uploaded_files) - 5} imágenes más")
             
             # Botón para procesar
-            if st.button("🔍 Analizar todas las imágenes", type="primary"):
+            if st.button("🚀 Procesar Imagen", type="primary", key="process_batch"):
+                # Generar ID de sesión único
+                session_id = str(uuid.uuid4())
+                
                 # Progress bar
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
                 start_time = time.time()
                 
-                # Procesar en batch
-                with st.spinner('Procesando múltiples imágenes...'):
-                    progress_bar.progress(50)
-                    status_text.text("Analizando imágenes...")
+                try:
+                    # PASO 1: Subir imágenes a Spaces
+                    status_text.text("📤 Subiendo imágenes a Digital Ocean Spaces...")
+                    progress_bar.progress(20)
                     
-                    results = prepare_multiple_images(image_paths)
+                    uploaded_urls = []
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        try:
+                            # Leer bytes de la imagen
+                            image_bytes = uploaded_file.getvalue()
+                            
+                            # Subir a Spaces
+                            image_url = upload_to_spaces(image_bytes, uploaded_file.name, session_id)
+                            uploaded_urls.append((uploaded_file.name, image_url))
+                            
+                            st.caption(f"✅ Subido: {uploaded_file.name}")
+                        except Exception as e:
+                            st.error(f"❌ Error subiendo {uploaded_file.name}: {str(e)}")
+                    
+                    if not uploaded_urls:
+                        st.error("❌ No se pudieron subir las imágenes a Spaces")
+                        return
+                    
+                    progress_bar.progress(40)
+                    
+                    # PASO 2: Enviar mensajes a Kafka
+                    status_text.text("📨 Enviando mensajes a Kafka...")
+                    
+                    for filename, image_url in uploaded_urls:
+                        try:
+                            send_to_kafka(image_url, session_id, filename)
+                            st.caption(f"✅ Enviado a Kafka: {filename}")
+                        except Exception as e:
+                            st.error(f"❌ Error enviando a Kafka {filename}: {str(e)}")
+                    
+                    progress_bar.progress(60)
+                    
+                    # PASO 3: Esperar resultados de Spark/PostgreSQL
+                    status_text.text("⏳ Esperando procesamiento de Spark...")
+                    st.warning("💡 **Spark está procesando las imágenes**. Esto puede tomar unos segundos...")
+                    
+                    progress_bar.progress(80)
+                    
+                    # Consultar resultados
+                    results = query_results_from_postgres(session_id, max_wait_seconds=60)
                     
                     progress_bar.progress(100)
                     end_time = time.time()
                     processing_time = end_time - start_time
-                
-                status_text.text(f"✅ Procesamiento completado en {processing_time:.2f} segundos")
-                
-                # Mostrar resultados
-                st.markdown("## 📊 Resultados del Procesamiento en Lote")
-                
-                # Crear DataFrame para mostrar resultados tabulares
-                df_results = []
-                for i, result in enumerate(results):
-                    df_results.append({
-                        'Imagen': uploaded_files[i].name,
-                        'Fruta Detectada': result['prediction'],
-                        'Confianza': f"{result['confidence']:.2%}",
-                        'Precio (S/./ kg)': result['price']
-                    })
-                
-                df = pd.DataFrame(df_results)
-                st.dataframe(df, use_container_width=True)
-                
-                # Mostrar imágenes con resultados en grid
-                st.markdown("### 🖼️ Vista Detallada de Resultados")
-                
-                # Crear grid de imágenes
-                cols_per_row = 3
-                for i in range(0, len(uploaded_files), cols_per_row):
-                    cols = st.columns(cols_per_row)
                     
-                    for j in range(cols_per_row):
-                        idx = i + j
-                        if idx < len(uploaded_files):
-                            with cols[j]:
-                                # Mostrar imagen
-                                img = Image.open(uploaded_files[idx]).resize((200, 200))
-                                st.image(img, use_container_width=True)
-                                
-                                # Mostrar resultados
-                                result = results[idx]
-                                st.markdown(f"**📝 {uploaded_files[idx].name}**")
-                                st.success(f"🍎 {result['prediction']}")
-                                st.info(f"🎯 {result['confidence']:.1%}")
-                                st.caption(f"💰 {result['price']}")
-                
-                # Resumen estadístico
-                st.markdown("### 📈 Resumen Estadístico")
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Total de Imágenes", len(results))
-                
-                with col2:
-                    avg_confidence = np.mean([r['confidence'] for r in results])
-                    st.metric("Confianza Promedio", f"{avg_confidence:.1%}")
-                
-                with col3:
-                    unique_fruits = len(set([r['prediction'] for r in results]))
-                    st.metric("Frutas Únicas", unique_fruits)
-                
-                with col4:
-                    st.metric("Tiempo de Proceso", f"{processing_time:.2f}s")
-                
-                # Mostrar distribución de frutas detectadas
-                fruit_counts = {}
-                for result in results:
-                    fruit = result['prediction']
-                    fruit_counts[fruit] = fruit_counts.get(fruit, 0) + 1
-                
-                if len(fruit_counts) > 1:
-                    st.markdown("### 📊 Distribución de Frutas Detectadas")
-                    chart_data = pd.DataFrame(list(fruit_counts.items()), columns=['Fruta', 'Cantidad'])
-                    st.bar_chart(chart_data.set_index('Fruta'))
-                
-                # Botón para limpiar resultados
-                if st.button("🗑️ Limpiar y procesar nuevas imágenes"):
-                    st.rerun()
-            
-            with col2:
-                st.markdown("#### 🔍 Resultados")
-                
-                with st.spinner('Analizando fruta...'):
-                    result = process_image(Image.open(img_file))
+                    if not results:
+                        st.error("❌ **Tiempo de espera agotado o error en el cluster**. Verifica que Spark esté procesando correctamente.")
+                        st.markdown("""
+                        **Posibles causas:**
+                        - El script `procesar_frutas.py` no está corriendo en Spark
+                        - PostgreSQL no está disponible
+                        - Kafka no está recibiendo mensajes
+                        """)
+                        return
+                    
+                    status_text.text(f"✅ Procesamiento completado en {processing_time:.2f} segundos")
+                    
+                    # PASO 4: Mostrar resultados
+                    st.markdown("## 📊 Resultados del Procesamiento Distribuido")
+                    st.success(f"✅ **{len(results)}** imágenes procesadas por Spark en **{processing_time:.2f}s**")
+                    
+                    # Crear DataFrame para mostrar resultados tabulares
+                    df_results = []
+                    for result in results:
+                        df_results.append({
+                            'Imagen': result['filename'],
+                            'Fruta Detectada': result['prediction'],
+                            'Confianza': f"{result['confidence']:.2%}",
+                            'Precio (S/./kg)': result['price'],
+                            'Procesado': result['processed_at'].strftime('%H:%M:%S')
+                        })
+                    
+                    df = pd.DataFrame(df_results)
+                    st.dataframe(df, use_container_width=True)
+                    
+                    # Mostrar imágenes con resultados en grid
+                    st.markdown("### 🖼️ Vista Detallada de Resultados (desde Spark)")
+                    
+                    # Crear grid de imágenes
+                    cols_per_row = 3
+                    for i in range(0, len(results), cols_per_row):
+                        cols = st.columns(cols_per_row)
+                        
+                        for j in range(cols_per_row):
+                            idx = i + j
+                            if idx < len(results):
+                                with cols[j]:
+                                    result = results[idx]
+                                    
+                                    # Buscar la imagen original en uploaded_files
+                                    matching_file = next((f for f in uploaded_files if f.name == result['filename']), None)
+                                    
+                                    if matching_file:
+                                        # Mostrar imagen
+                                        img = Image.open(matching_file).resize((200, 200))
+                                        st.image(img, use_container_width=True)
+                                    
+                                    # Mostrar resultados
+                                    st.markdown(f"**📝 {result['filename']}**")
+                                    st.success(f"🍎 {result['prediction']}")
+                                    st.info(f"🎯 {result['confidence']:.1%}")
+                                    st.caption(f"💰 {result['price']}")
+                                    st.caption(f"⏱️ {result['processed_at'].strftime('%H:%M:%S')}")
+                    
+                    # Resumen estadístico
+                    st.markdown("### 📈 Resumen Estadístico del Cluster")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Total de Imágenes", len(results))
+                    
+                    with col2:
+                        avg_confidence = np.mean([r['confidence'] for r in results])
+                        st.metric("Confianza Promedio", f"{avg_confidence:.1%}")
+                    
+                    with col3:
+                        unique_fruits = len(set([r['prediction'] for r in results]))
+                        st.metric("Frutas Únicas", unique_fruits)
+                    
+                    with col4:
+                        st.metric("Tiempo Total", f"{processing_time:.2f}s")
+                    
+                    # Mostrar distribución de frutas detectadas
+                    fruit_counts = {}
+                    for result in results:
+                        fruit = result['prediction']
+                        fruit_counts[fruit] = fruit_counts.get(fruit, 0) + 1
+                    
+                    if len(fruit_counts) > 1:
+                        st.markdown("### 📊 Distribución de Frutas Detectadas")
+                        chart_data = pd.DataFrame(list(fruit_counts.items()), columns=['Fruta', 'Cantidad'])
+                        st.bar_chart(chart_data.set_index('Fruta'))
+                    
+                    # Información de la sesión
+                    st.markdown("---")
+                    st.caption(f"🔑 **Session ID**: `{session_id}`")
+                    st.caption("💡 Los resultados se almacenaron en PostgreSQL y se procesaron con Apache Spark")
+                    
+                except Exception as e:
+                    st.error(f"❌ **Error durante el procesamiento**: {str(e)}")
+                    st.markdown("""
+                    **Verifica:**
+                    - Kafka está corriendo en `165.245.129.149:9092`
+                    - Spark está ejecutando `procesar_frutas.py`
+                    - PostgreSQL está disponible en `165.245.129.150:5432`
+                    - Digital Ocean Spaces está configurado correctamente
+                    """)
                     
                 # Mostrar predicción
                 st.success(f"🍎 **Identificado como: {result}**")
@@ -484,7 +730,6 @@ def run():
             if st.button("📷 Tomar otra foto", key="retake_photo", type="primary"):
                 st.session_state.camera_key += 1
                 st.rerun()
-origin/main
 
 # Sidebar con información
 with st.sidebar:
@@ -495,13 +740,15 @@ with st.sidebar:
     
     st.markdown("## 📊 Características")
     st.markdown("""
-    - ✅ Procesamiento individual
-    - ✅ Captura con cámara web
-    - ✅ Procesamiento en lote (hasta 10 imágenes)
+    - ✅ Procesamiento individual (local)
+    - ✅ Captura con cámara web (local)
+    - ✅ Procesamiento distribuido (Kafka + Spark)
+    - ✅ Digital Ocean Spaces (S3)
+    - ✅ Apache Kafka streaming
+    - ✅ Apache Spark processing
+    - ✅ PostgreSQL persistencia
     - ✅ Predicción con confianza
     - ✅ Precios referenciales en soles
-    - ✅ Análisis estadístico
-    - ✅ Visualización de resultados
     """)
     
     st.markdown("## 🎯 Tipos de Fruta Soportados")
